@@ -712,10 +712,11 @@ void UserInfoPopup::updateUserData()
                 {
                     QDateTime followedAt = QDateTime::fromString(
                         subageInfo.followingSince, Qt::ISODate);
+                    QDateTime qNow(QDate::currentDate());
                     QString followingSince = followedAt.toString("dd.MM.yyyy");
                     this->ui_.followageLabel->setText("❤ Following since " +
                                                       followingSince + 
-                                                      " (" + followedAt.daysTo(QDate::currentDate()) + " days)");
+                                                      " (" + followedAt.daysTo(qNow) + " days)");
                 }
 
                 if (subageInfo.isSubHidden)
