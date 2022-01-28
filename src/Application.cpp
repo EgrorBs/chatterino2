@@ -12,6 +12,7 @@
 #include "controllers/notifications/NotificationController.hpp"
 #include "debug/AssertInGuiThread.hpp"
 #include "messages/MessageBuilder.hpp"
+#include "providers/seventv/SeventvEmotes.hpp"
 #include "providers/bttv/BttvEmotes.hpp"
 #include "providers/chatterino/ChatterinoBadges.hpp"
 #include "providers/ffz/FfzBadges.hpp"
