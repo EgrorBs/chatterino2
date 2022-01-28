@@ -972,7 +972,6 @@ Outcome TwitchMessageBuilder::tryAppendEmote(const EmoteName &name)
 {
     auto *app = getApp();
 
-    const auto &globalSeventvEmotes = app->twitch.server->getSeventvEmotes();
     const auto &globalBttvEmotes = app->twitch.server->getBttvEmotes();
     const auto &globalFfzEmotes = app->twitch.server->getFfzEmotes();
 
@@ -989,18 +988,9 @@ Outcome TwitchMessageBuilder::tryAppendEmote(const EmoteName &name)
         flags = MessageElementFlag::FfzEmote;
     }
     else if (this->twitchChannel &&
-             (emote = this->twitchChannel->seventvEmote(name)))
-    {
-        flags = MessageElementFlag::SeventvEmote;
-    }
-    else if (this->twitchChannel &&
              (emote = this->twitchChannel->bttvEmote(name)))
     {
         flags = MessageElementFlag::BttvEmote;
-    }
-    else if ((emote = globalSeventvEmotes.emote(name)))
-    {
-        flags = MessageElementFlag::SeventvEmote;
     }
     else if ((emote = globalFfzEmotes.emote(name)))
     {
