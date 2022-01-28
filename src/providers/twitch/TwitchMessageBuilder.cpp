@@ -312,7 +312,6 @@ void TwitchMessageBuilder::addWords(
         while (doesWordContainATwitchEmote(cursor, word, twitchEmotes,
                                            currentTwitchEmoteIt))
         {
-            auto wordEnd = cursor + word.length();
             const auto &currentTwitchEmote = *currentTwitchEmoteIt;
 
             if (currentTwitchEmote.start == cursor)
@@ -1101,6 +1100,22 @@ void TwitchMessageBuilder::appendTwitchBadges()
                         .arg(subMonths);
             }
         }
+        else if (badge.flag_ == MessageElementFlag::BadgePredictions)
+        {
+            auto badgeInfoIt = badgeInfos.find(badge.key_);
+            if (badgeInfoIt != badgeInfos.end())
+            {
+                auto predictionText =
+                    badgeInfoIt->second
+                        .replace("\\s", " ")  // standard IRC escapes
+                        .replace("\\:", ";")
+                        .replace("\\\\", "\\")
+                        .replace("⸝", ",");  // twitch's comma escape
+                // Careful, the first character is RIGHT LOW PARAPHRASE BRACKET or U+2E1D, which just looks like a comma
+
+                tooltip = QString("Predicted %1").arg(predictionText);
+            }
+        }
 
         this->emplace<BadgeElement>(badgeEmote.get(), badge.flag_)
             ->setTooltip(tooltip);
@@ -1444,17 +1459,23 @@ void TwitchMessageBuilder::deletionMessage(const DeleteAction &action,
     builder->message().timeoutUser = "msg:" + action.messageId;
 }
 
-void TwitchMessageBuilder::modsOrVipsSystemMessage(QString prefix,
-                                                   QStringList users,
-                                                   TwitchChannel *channel,
-                                                   MessageBuilder *builder)
+void TwitchMessageBuilder::listOfUsersSystemMessage(QString prefix,
+                                                    QStringList users,
+                                                    Channel *channel,
+                                                    MessageBuilder *builder)
 {
+    QString text = prefix + users.join(", ");
+
+    builder->message().messageText = text;
+    builder->message().searchText = text;
+
     builder->emplace<TimestampElement>();
     builder->message().flags.set(MessageFlag::System);
     builder->message().flags.set(MessageFlag::DoNotTriggerNotification);
     builder->emplace<TextElement>(prefix, MessageElementFlag::Text,
                                   MessageColor::System);
     bool isFirst = true;
+    auto tc = dynamic_cast<TwitchChannel *>(channel);
     for (const QString &username : users)
     {
         if (!isFirst)
@@ -1467,9 +1488,9 @@ void TwitchMessageBuilder::modsOrVipsSystemMessage(QString prefix,
 
         MessageColor color = MessageColor::System;
 
-        if (getSettings()->colorUsernames)
+        if (tc && getSettings()->colorUsernames)
         {
-            if (auto userColor = channel->getUserColor(username);
+            if (auto userColor = tc->getUserColor(username);
                 userColor.isValid())
             {
                 color = MessageColor(userColor);

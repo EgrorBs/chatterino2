@@ -230,8 +230,15 @@ std::vector<MessagePtr> IrcMessageHandler::parsePrivMessage(
 void IrcMessageHandler::handlePrivMessage(Communi::IrcPrivateMessage *message,
                                           TwitchIrcServer &server)
 {
-    this->addMessage(message, message->target(), message->content(), server,
-                     false, message->isAction());
+    // This is to make sure that combined emoji go through properly, see
+    // https://github.com/Chatterino/chatterino2/issues/3384 and
+    // https://mm2pl.github.io/emoji_rfc.pdf for more details
+    // Constants used here are defined in TwitchChannel.hpp
+
+    this->addMessage(
+        message, message->target(),
+        message->content().replace(COMBINED_FIXER, ZERO_WIDTH_JOINER), server,
+        false, message->isAction());
 }
 
 void IrcMessageHandler::addMessage(Communi::IrcMessage *_message,
@@ -560,8 +567,10 @@ void IrcMessageHandler::handleWhisperMessage(Communi::IrcMessage *message)
 
     auto c = getApp()->twitch.server->whispersChannel.get();
 
-    TwitchMessageBuilder builder(c, message, args, message->parameter(1),
-                                 false);
+    TwitchMessageBuilder builder(
+        c, message, args,
+        message->parameter(1).replace(COMBINED_FIXER, ZERO_WIDTH_JOINER),
+        false);
 
     if (builder.isIgnored())
     {
@@ -807,10 +816,17 @@ void IrcMessageHandler::handleNoticeMessage(Communi::IrcNoticeMessage *message)
         }
 
         QString tags = message->tags().value("msg-id").toString();
-        if (tags == "bad_delete_message_error" || tags == "usage_delete")
+        if (tags == "usage_delete")
         {
             channel->addMessage(makeSystemMessage(
-                "Usage: /delete <msg-id>. Can't take more than one argument"));
+                "Usage: /delete <msg-id> - Deletes the specified message. "
+                "Can't take more than one argument."));
+        }
+        else if (tags == "bad_delete_message_error")
+        {
+            channel->addMessage(makeSystemMessage(
+                "There was a problem deleting the message. "
+                "It might be from another channel or too old to delete."));
         }
         else if (tags == "host_on" || tags == "host_target_went_offline")
         {
@@ -820,18 +836,18 @@ void IrcMessageHandler::handleNoticeMessage(Communi::IrcNoticeMessage *message)
             {
                 return;
             }
-            auto &channelName = hostOn ? parts[2] : parts[0];
-            if (channelName.size() < 2)
+            auto &hostedChannelName = hostOn ? parts[2] : parts[0];
+            if (hostedChannelName.size() < 2)
             {
                 return;
             }
             if (hostOn)
             {
-                channelName.chop(1);
+                hostedChannelName.chop(1);
             }
             MessageBuilder builder;
-            TwitchMessageBuilder::hostingSystemMessage(channelName, &builder,
-                                                       hostOn);
+            TwitchMessageBuilder::hostingSystemMessage(hostedChannelName,
+                                                       &builder, hostOn);
             channel->addMessage(builder.release());
         }
         else if (tags == "room_mods" || tags == "vips_success")
@@ -855,8 +871,11 @@ void IrcMessageHandler::handleNoticeMessage(Communi::IrcNoticeMessage *message)
                    "IrcMessageHandler::handleNoticeMessage. Twitch specific "
                    "functionality called in non twitch channel");
 
-            TwitchMessageBuilder::modsOrVipsSystemMessage(
-                msgParts.at(0), msgParts.at(1).split(", "), tc, &builder);
+            auto users = msgParts.at(1)
+                             .mid(1)  // there is a space before the first user
+                             .split(", ");
+            TwitchMessageBuilder::listOfUsersSystemMessage(msgParts.at(0),
+                                                           users, tc, &builder);
             channel->addMessage(builder.release());
         }
         else

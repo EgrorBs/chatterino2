@@ -3,8 +3,10 @@
 #include "Application.hpp"
 #include "common/Channel.hpp"
 #include "common/NetworkRequest.hpp"
+#include "common/QLogging.hpp"
 #include "controllers/accounts/AccountController.hpp"
 #include "controllers/highlights/HighlightBlacklistUser.hpp"
+#include "controllers/hotkeys/HotkeyController.hpp"
 #include "messages/Message.hpp"
 #include "messages/MessageBuilder.hpp"
 #include "providers/IvrApi.hpp"
@@ -18,9 +20,9 @@
 #include "util/Helpers.hpp"
 #include "util/LayoutCreator.hpp"
 #include "util/PostToThread.hpp"
-#include "util/Shortcut.hpp"
 #include "util/StreamerMode.hpp"
 #include "widgets/Label.hpp"
+#include "widgets/Scrollbar.hpp"
 #include "widgets/helper/ChannelView.hpp"
 #include "widgets/helper/EffectLabel.hpp"
 #include "widgets/helper/Line.hpp"
@@ -131,6 +133,7 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, QWidget *parent)
                                     : userInfoPopupFlags,
                  parent)
     , hack_(new bool)
+    , dragTimer_(this)
 {
     this->setWindowTitle("Usercard");
     this->setStayInScreenRect(true);
@@ -140,10 +143,47 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, QWidget *parent)
     else
         this->setAttribute(Qt::WA_DeleteOnClose);
 
-    // Close the popup when Escape is pressed
-    createWindowShortcut(this, "Escape", [this] {
-        this->deleteLater();
-    });
+    HotkeyController::HotkeyMap actions{
+        {"delete",
+         [this](std::vector<QString>) -> QString {
+             this->deleteLater();
+             return "";
+         }},
+        {"scrollPage",
+         [this](std::vector<QString> arguments) -> QString {
+             if (arguments.size() == 0)
+             {
+                 qCWarning(chatterinoHotkeys)
+                     << "scrollPage hotkey called without arguments!";
+                 return "scrollPage hotkey called without arguments!";
+             }
+             auto direction = arguments.at(0);
+
+             auto &scrollbar = this->ui_.latestMessages->getScrollBar();
+             if (direction == "up")
+             {
+                 scrollbar.offset(-scrollbar.getLargeChange());
+             }
+             else if (direction == "down")
+             {
+                 scrollbar.offset(scrollbar.getLargeChange());
+             }
+             else
+             {
+                 qCWarning(chatterinoHotkeys) << "Unknown scroll direction";
+             }
+             return "";
+         }},
+
+        // these actions make no sense in the context of a usercard, so they aren't implemented
+        {"reject", nullptr},
+        {"accept", nullptr},
+        {"openTab", nullptr},
+        {"search", nullptr},
+    };
+
+    this->shortcuts_ = getApp()->hotkeys->shortcutsForCategory(
+        HotkeyCategory::PopupWindow, actions, this);
 
     auto layout = LayoutCreator<QWidget>(this->getLayoutContainer())
                       .setLayoutType<QVBoxLayout>();
@@ -389,12 +429,21 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, QWidget *parent)
 
     this->installEvents();
     this->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Policy::Ignored);
-}
 
-// remove once https://github.com/pajlada/signals/pull/10 gets merged
-UserInfoPopup::~UserInfoPopup()
-{
-    this->refreshConnection_.disconnect();
+    this->dragTimer_.callOnTimeout(
+        [this, hack = std::weak_ptr<bool>(this->hack_)] {
+            if (!hack.lock())
+            {
+                // Ensure this timer is never called after the object has been destroyed
+                return;
+            }
+            if (!this->isMoving_)
+            {
+                return;
+            }
+
+            this->move(this->requestedDragPos_);
+        });
 }
 
 void UserInfoPopup::themeChangedEvent()
@@ -418,6 +467,36 @@ void UserInfoPopup::scaleChangedEvent(float /*scale*/)
 
         this->setGeometry(geo);
     });
+}
+
+void UserInfoPopup::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::MouseButton::LeftButton)
+    {
+        this->dragTimer_.start(std::chrono::milliseconds(17));
+        this->startPosDrag_ = event->pos();
+        this->movingRelativePos = event->localPos();
+    }
+}
+
+void UserInfoPopup::mouseReleaseEvent(QMouseEvent *event)
+{
+    this->dragTimer_.stop();
+    this->isMoving_ = false;
+}
+
+void UserInfoPopup::mouseMoveEvent(QMouseEvent *event)
+{
+    // Drag the window by the amount changed from inital position
+    // Note that we provide a few *units* of deadzone so people don't
+    // start dragging the window if they are slow at clicking.
+    auto movePos = event->pos() - this->startPosDrag_;
+    if (this->isMoving_ || movePos.manhattanLength() > 10.0)
+    {
+        this->requestedDragPos_ =
+            (event->screenPos() - this->movingRelativePos).toPoint();
+        this->isMoving_ = true;
+    }
 }
 
 void UserInfoPopup::installEvents()
@@ -562,26 +641,25 @@ void UserInfoPopup::updateLatestMessages()
     // shrink dialog in case ChannelView goes from visible to hidden
     this->adjustSize();
 
-    this->refreshConnection_
-        .disconnect();  // remove once https://github.com/pajlada/signals/pull/10 gets merged
+    this->refreshConnection_ =
+        std::make_unique<pajlada::Signals::ScopedConnection>(
+            this->channel_->messageAppended.connect([this, hasMessages](
+                                                        auto message, auto) {
+                if (!checkMessageUserName(this->userName_, message))
+                    return;
 
-    this->refreshConnection_ = this->channel_->messageAppended.connect(
-        [this, hasMessages](auto message, auto) {
-            if (!checkMessageUserName(this->userName_, message))
-                return;
-
-            if (hasMessages)
-            {
-                // display message in ChannelView
-                this->ui_.latestMessages->channel()->addMessage(message);
-            }
-            else
-            {
-                // The ChannelView is currently hidden, so manually refresh
-                // and display the latest messages
-                this->updateLatestMessages();
-            }
-        });
+                if (hasMessages)
+                {
+                    // display message in ChannelView
+                    this->ui_.latestMessages->channel()->addMessage(message);
+                }
+                else
+                {
+                    // The ChannelView is currently hidden, so manually refresh
+                    // and display the latest messages
+                    this->updateLatestMessages();
+                }
+            }));
 }
 
 void UserInfoPopup::updateUserData()

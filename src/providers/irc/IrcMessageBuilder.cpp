@@ -42,6 +42,13 @@ IrcMessageBuilder::IrcMessageBuilder(Channel *_channel,
     assert(false);
 }
 
+IrcMessageBuilder::IrcMessageBuilder(
+    const Communi::IrcNoticeMessage *_ircMessage, const MessageParseArgs &_args)
+    : SharedMessageBuilder(Channel::getEmpty().get(), _ircMessage, _args,
+                           _ircMessage->content(), false)
+{
+}
+
 MessagePtr IrcMessageBuilder::build()
 {
     // PARSE
@@ -109,12 +116,10 @@ void IrcMessageBuilder::addWords(const QStringList &words)
 
         if (!i.hasNext())
         {
-            this->emplace<TextElement>(string, MessageElementFlag::Text,
-                                       textColor);
+            this->addText(string, textColor);
             continue;
         }
 
-        int pos = 0;
         int lastPos = 0;
 
         while (i.hasNext())
@@ -132,10 +137,9 @@ void IrcMessageBuilder::addWords(const QStringList &words)
                 {
                     textColor = defaultColor;
                 }
-                this->emplace<TextElement>(
-                        string.mid(lastPos, match.capturedStart() - lastPos),
-                        MessageElementFlag::Text, textColor)
-                    ->setTrailingSpace(false);
+                this->addText(
+                    string.mid(lastPos, match.capturedStart() - lastPos),
+                    textColor, false);
                 lastPos = match.capturedStart() + match.capturedLength();
             }
             if (!match.captured(1).isEmpty())
@@ -173,11 +177,28 @@ void IrcMessageBuilder::addWords(const QStringList &words)
         {
             textColor = defaultColor;
         }
-        this->emplace<TextElement>(string.mid(lastPos),
-                                   MessageElementFlag::Text, textColor);
+        this->addText(string.mid(lastPos), textColor);
     }
 
     this->message().elements.back()->setTrailingSpace(false);
+}
+
+void IrcMessageBuilder::addText(const QString &text, const QColor &color,
+                                bool addSpace)
+{
+    this->textColor_ = color;
+    for (auto &variant : getApp()->emotes->emojis.parse(text))
+    {
+        boost::apply_visitor(
+            [&](auto &&arg) {
+                this->addTextOrEmoji(arg);
+            },
+            variant);
+        if (!addSpace)
+        {
+            this->message().elements.back()->setTrailingSpace(false);
+        }
+    }
 }
 
 void IrcMessageBuilder::appendUsername()
@@ -189,14 +210,30 @@ void IrcMessageBuilder::appendUsername()
     // The full string that will be rendered in the chat widget
     QString usernameText = username;
 
-    if (!this->action_)
+    if (this->args.isReceivedWhisper)
     {
-        usernameText += ":";
-    }
+        this->emplace<TextElement>(usernameText, MessageElementFlag::Username,
+                                   this->usernameColor_,
+                                   FontStyle::ChatMediumBold)
+            ->setLink({Link::UserWhisper, this->message().displayName});
 
-    this->emplace<TextElement>(usernameText, MessageElementFlag::Username,
-                               this->usernameColor_, FontStyle::ChatMediumBold)
-        ->setLink({Link::UserInfo, this->message().loginName});
+        // Separator
+        this->emplace<TextElement>("->", MessageElementFlag::Username,
+                                   MessageColor::System, FontStyle::ChatMedium);
+
+        this->emplace<TextElement>("you:", MessageElementFlag::Username);
+    }
+    else
+    {
+        if (!this->action_)
+        {
+            usernameText += ":";
+        }
+        this->emplace<TextElement>(usernameText, MessageElementFlag::Username,
+                                   this->usernameColor_,
+                                   FontStyle::ChatMediumBold)
+            ->setLink({Link::UserInfo, this->message().loginName});
+    }
 }
 
 }  // namespace chatterino
